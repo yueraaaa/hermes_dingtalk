@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"which gh && gh auth status 2>&1 | head -5\"}",
-  "error": "Exit code 1\ngh not found",
-  "timestamp": "2026-04-13T05:41:29.573Z",
-  "retry_count": 1
-}
