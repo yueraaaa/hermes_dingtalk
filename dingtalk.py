@@ -18,6 +18,7 @@ Configuration in config.yaml:
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -39,6 +40,13 @@ try:
 except ImportError:
     HTTPX_AVAILABLE = False
     httpx = None  # type: ignore[assignment]
+
+try:
+    import websockets
+    WEBSOCKETS_AVAILABLE = True
+except ImportError:
+    WEBSOCKETS_AVAILABLE = False
+    websockets = None  # type: ignore[assignment]
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
@@ -101,6 +109,9 @@ class DingTalkAdapter(BasePlatformAdapter):
         if not HTTPX_AVAILABLE:
             logger.warning("[%s] httpx not installed. Run: pip install httpx", self.name)
             return False
+        if not WEBSOCKETS_AVAILABLE:
+            logger.warning("[%s] websockets not installed. Run: pip install websockets", self.name)
+            return False
         if not self._client_id or not self._client_secret:
             logger.warning("[%s] DINGTALK_CLIENT_ID and DINGTALK_CLIENT_SECRET required", self.name)
             return False
@@ -125,26 +136,70 @@ class DingTalkAdapter(BasePlatformAdapter):
             return False
 
     async def _run_stream(self) -> None:
-        """Run the blocking stream client with auto-reconnection."""
+        """Run the stream client with manual reconnection and backoff."""
         backoff_idx = 0
         while self._running:
             try:
-                logger.debug("[%s] Starting stream client...", self.name)
-                await self._stream_client.start()
+                logger.debug("[%s] Opening stream connection...", self.name)
+                connection = self._stream_client.open_connection()
+                if not connection:
+                    raise RuntimeError("open_connection returned None")
+
+                ticket = connection.get("ticket", "")
+                endpoint = connection.get("endpoint", "")
+                uri = f"{endpoint}?ticket={ticket}"
+                logger.debug("[%s] Connecting to %s", self.name, uri)
+
+                keepalive_task: Optional[asyncio.Task] = None
+                async with websockets.connect(uri, ping_interval=60) as ws:
+                    self._stream_client.websocket = ws
+                    keepalive_task = asyncio.create_task(
+                        self._stream_keepalive(ws)
+                    )
+
+                    try:
+                        async for raw_message in ws:
+                            json_message = json.loads(raw_message)
+                            asyncio.create_task(
+                                self._stream_client.background_task(json_message)
+                            )
+                    finally:
+                        # Connection closed — cancel keepalive
+                        if keepalive_task:
+                            keepalive_task.cancel()
+                            try:
+                                await keepalive_task
+                            except asyncio.CancelledError:
+                                pass
+
+                    # If we exit the loop normally, connection was closed
+                    logger.warning("[%s] WebSocket closed, reconnecting...", self.name)
+
             except asyncio.CancelledError:
                 return
+            except websockets.exceptions.ConnectionClosedError as e:
+                logger.warning("[%s] WebSocket closed: %s", self.name, e)
             except Exception as e:
                 if not self._running:
                     return
-                logger.warning("[%s] Stream client error: %s", self.name, e)
+                logger.warning("[%s] Stream error: %s", self.name, e)
 
             if not self._running:
                 return
 
             delay = RECONNECT_BACKOFF[min(backoff_idx, len(RECONNECT_BACKOFF) - 1)]
-            logger.info("[%s] Reconnecting in %ds...", self.name, delay)
+            logger.info("[%s] Reconnecting in %ds (backoff idx=%d)...", self.name, delay, backoff_idx)
             await asyncio.sleep(delay)
-            backoff_idx += 1
+            backoff_idx = min(backoff_idx + 1, len(RECONNECT_BACKOFF) - 1)
+
+    async def _stream_keepalive(self, ws: "websockets.WebSocketClientProtocol") -> None:
+        """Send periodic pings to keep the connection alive."""
+        while self._running:
+            await asyncio.sleep(60)
+            try:
+                await ws.ping()
+            except Exception:
+                break
 
     async def disconnect(self) -> None:
         """Disconnect from DingTalk."""

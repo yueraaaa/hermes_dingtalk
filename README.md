@@ -6,11 +6,12 @@
 
 1. **`CallbackMessage` 属性访问修复** — SDK 传递的是 `CallbackMessage` 对象（数据在 `.data` 字典中），原代码错误地直接访问 snake_case 属性导致全为 `None`
 2. **文本提取修复** — 当消息无 `msgtype` 字段时，文本存储在 `msg.extensions['text']` 而非 `msg.text`，原代码漏掉了这个回退路径
+3. **重连 backoff 机制修复** — 原代码调用 SDK 的 `start()` 是一个永不返回的阻塞循环，backoff 逻辑永远不会被执行。现改为自主管理 WebSocket 连接循环，实现正确的指数退避重连（2s→5s→10s→30s→60s）
 
 ## 依赖
 
 ```bash
-pip install dingtalk-stream httpx
+pip install dingtalk-stream httpx websockets
 ```
 
 ## 安装
@@ -85,17 +86,31 @@ asyncio.run(test())
 | 图片/文件/语音 | 回退为 URL 文本 |
 | 群聊/单聊 | ✅ |
 | Stream Mode 长连接 | ✅ |
-| 自动重连 | ✅ |
+| 自动重连（含指数退避） | ✅ |
 
 ## 工作原理
 
 ```
-钉钉服务器 ←WebSocket→ dingtalk-stream SDK ←CallbackMessage→ DingTalkAdapter
-                                                              ↓
-                                                    Hermes Gateway 处理
-                                                              ↓
-                                                    session_webhook 回复
+钉钉服务器 ←WebSocket→ DingTalkAdapter（自主管理连接）
+                              ↓
+                    open_connection() + websockets.connect()
+                              ↓
+                    消息 → CallbackMessage → Hermes Gateway
+                              ↓
+                    session_webhook 回复
 ```
+
+### 重连机制
+
+连接断开后，DingTalkAdapter 自主执行指数退避重连：
+
+| 重试次数 | 等待时间 |
+|---------|---------|
+| 1 | 2s |
+| 2 | 5s |
+| 3 | 10s |
+| 4 | 30s |
+| 5+ | 60s（封顶） |
 
 ## 故障排查
 
@@ -104,8 +119,9 @@ asyncio.run(test())
 - 首次发送消息后才能获得 session_webhook
 
 **Stream 连接断开/重连：**
-- 正常现象，SDK 内置自动重连机制
+- 正常现象，适配器会自动以指数退避重连
+- 可通过日志查看 backoff 状态：`Reconnecting in Xs (backoff idx=Y)`
 
 **模块导入失败：**
-- 确认已安装：`pip install dingtalk-stream httpx`
+- 确认已安装：`pip install dingtalk-stream httpx websockets`
 - 确认 hermes-agent 版本支持 dingtalk 平台
