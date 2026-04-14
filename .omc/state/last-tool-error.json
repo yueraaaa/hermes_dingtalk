@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"git stash && git pull --rebase && git stash pop && git push\",\"description\":\"Stash unstaged changes, pull rebase, restore stash, push\"}",
+  "error": "Exit code 1\nSaved working directory and index state WIP on main: 7913dc6 fix: 自主管理WebSocket连接，实现正确的指数退避重连\nFrom https://github.com/yueraaaa/hermes_dingtalk\n   bfd9c18..e33a24e  main       -> origin/main\nRebasing (1/1)\rSuccessfully rebased and updated refs/heads/main.\nCONFLICT (modify/delete): .DS_Store deleted in Updated upstream and modified in Stashed changes.  Version Stashed changes of .DS_Store left in tree.\nCONFLICT (modify/delete): .omc/state/idle-notif-cooldown.json deleted in Updated ups...",
+  "timestamp": "2026-04-14T10:58:16.604Z",
+  "retry_count": 3
+}
