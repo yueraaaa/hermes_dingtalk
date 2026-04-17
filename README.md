@@ -10,46 +10,69 @@
 - ✅ **消息去重** — 300 秒窗口，最高 1000 条记录
 - ✅ **互动卡片**（可选）— 消息处理中显示"正在处理..."卡片，完成后更新为回复内容
 
-## 修复内容（v0.2.0）
+---
 
-本次更新（2026-04-17）修复了以下问题：
+## 升级指南（已有旧版 hermes-dingtalk）
 
-1. **`websockets` 版本兼容** — `dingtalk-stream>=0.23.0` 兼容 `websockets>=15.x`
-2. **`await start()` 调用修复** — 直接 `await self._stream_client.start()`，不再使用 `asyncio.to_thread`
-3. **`CallbackMessage` 属性访问** — 数据在 `.data` 字典中，正确处理蛇形属性
-4. **文本提取兜底** — 支持 `rich_text` 降级路径
-5. **互动卡片功能** — 新增 Processing Card 支持（需配置 `card_template_id`）
+如果你已安装旧版（之前用单文件 `dingtalk.py` 或旧版 pip 包），按以下步骤升级：
 
-## 依赖
+### 第一步：升级 dingtalk-stream SDK（如需要）
 
 ```bash
-pip install hermes-dingtalk
-# 或
-pip install dingtalk-stream>=0.23.0 httpx
+# 确认当前版本
+pip show dingtalk-stream
+
+# 如果是 0.24.x，降级到 0.23.0
+pip install dingtalk-stream==0.23.0
 ```
 
-## 安装
-
-### 方式一：作为 pip 包安装（推荐）
+### 第二步：替换适配器文件
 
 ```bash
+# 方式 A：直接复制（简单快速）
+cp src/hermes_dingtalk/adapter.py \
+  ~/.hermes/hermes-agent/venv/lib/python3.11/site-packages/hermes_dingtalk/adapter.py
+
+# 方式 B：卸载旧包 + pip 安装新包
+pip uninstall hermes-dingtalk -y
 pip install hermes-dingtalk
 ```
 
-### 方式二：覆盖 hermes-agent 中的旧版文件
-
-如果你的 hermes-agent 使用旧版钉钉适配器：
+### 第三步：重启 Gateway
 
 ```bash
-# 备份原文件
-cp gateway/platforms/dingtalk.py gateway/platforms/dingtalk.py.bak
+# 方式 A：使用 hermes 命令
+hermes gateway restart
 
-# 覆盖为新版
-cp hermes_dingtalk/dingtalk.py gateway/platforms/dingtalk.py
+# 方式 B：手动重启
+pkill -f "hermes.*gateway"
+cd ~/.hermes/hermes-agent && nohup venv/bin/python -m hermes_cli.main gateway run --replace &
+```
+
+### 验证是否生效
+
+```bash
+# 查看 Gateway 日志，确认无 Stream error
+tail -f ~/.hermes/logs/gateway.log
+```
+
+---
+
+## 首次安装
+
+```bash
+# 安装依赖
+pip install dingtalk-stream==0.23.0 httpx
+
+# 复制适配器
+cp src/hermes_dingtalk/adapter.py \
+  ~/.hermes/hermes-agent/venv/lib/python3.11/site-packages/hermes_dingtalk/adapter.py
 
 # 重启 Gateway
 hermes gateway restart
 ```
+
+---
 
 ## 配置
 
@@ -72,6 +95,8 @@ DINGTALK_CLIENT_ID=your-app-key
 DINGTALK_CLIENT_SECRET=***
 ```
 
+---
+
 ## 钉钉开放平台配置
 
 1. 进入 [钉钉开放平台](https://open.dingtalk.com/)
@@ -79,6 +104,8 @@ DINGTALK_CLIENT_SECRET=***
 3. 配置消息接收模式为「Stream 模式」
 4. 获取 `Client ID` 和 `Client Secret`
 5. 将机器人添加到群聊或单聊
+
+---
 
 ## 互动卡片（可选）
 
@@ -90,42 +117,24 @@ DINGTALK_CLIENT_SECRET=***
 
 不配置卡片模板 ID 时，系统会降级为普通 markdown 消息，不影响正常通讯。
 
-## 消息类型支持
+---
 
-| 类型 | 状态 |
-|------|------|
-| 文本消息 | ✅ |
-| Markdown 回复 | ✅ |
-| 图片/文件/语音 | 降级为 URL 文本 |
-| 群聊/单聊 | ✅ |
-| Stream Mode 长连接 | ✅ |
-| 自动重连（含指数退避） | ✅ |
-| 互动处理卡片 | ✅（可选）|
+## 修复历史
 
-## 工作原理
+### v0.2.0（2026-04-17）
 
-```
-钉钉服务器 ←WebSocket→ DingTalkAdapter
-                              ↓
-                    dingtalk-stream SDK
-                              ↓
-                    消息 → ChatbotHandler → Hermes Gateway
-                              ↓
-                    session_webhook 回复
-```
+- `dingtalk-stream>=0.23.0` 兼容 `websockets>=15.x`
+- `await start()` 协程调用方式修复
+- Processing Card 互动卡片功能
+- 从单文件改为完整 pip 包结构
 
-## 故障排查
+### v1.0.0（更早版本）
 
-**DingTalk 已连接但无法收发消息：**
-- 确认机器人已添加到群/单聊
-- 首次发送消息后才能获得 session_webhook
+- 基础 Stream Mode 支持
+- 消息去重
+- 自动重连
 
-**Stream 连接断开/重连：**
-- 正常现象，适配器会自动以指数退避重连
-
-**模块导入失败：**
-- 确认已安装：`pip install dingtalk-stream httpx`
-- 确认 hermes-agent 版本支持 dingtalk 平台
+---
 
 ## 目录结构
 
@@ -133,7 +142,7 @@ DINGTALK_CLIENT_SECRET=***
 hermes_dingtalk/
 ├── src/hermes_dingtalk/
 │   ├── __init__.py          # 包入口
-│   ├── adapter.py           # 核心适配器（与 venv 中版本一致）
+│   ├── adapter.py           # 核心适配器
 │   └── stubs/               # Hermes gateway 接口桩（独立运行用）
 │       ├── __init__.py
 │       ├── base.py
